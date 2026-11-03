@@ -1,0 +1,34 @@
+{
+  "timezone": "Asia/Bangkok",
+  "weather_rows": 4416,
+  "hourly_ac_rows_before_join": 26496,
+  "joined_rows": 26496,
+  "joined_pair_rows": 26439,
+  "joined_missing_temperature": 0,
+  "joined_missing_ac_power": 57,
+  "source_summary": {
+    "Floor1.csv": {
+      "rows": 264960,
+      "ac_zones": 1,
+      "partial_ac_rows_excluded": 1518
+    },
+    "Floor2.csv": {
+      "rows": 264960,
+      "ac_zones": 3,
+      "partial_ac_rows_excluded": 589
+    }
+  },
+  "correlation_rows": 9,
+  "outputs": {
+    "hourly_join": "backend/data/external/weather_energy_hourly.csv",
+    "correlations": "backend/data/external/weather_energy_correlations.csv",
+    "scatter": "backend/data/external/weather_ac_scatter.png",
+    "trend": "backend/data/external/weather_ac_trend.png"
+  },
+  "limitations": [
+    "Pearson and Spearman correlation do not establish causation.",
+    "Open-Meteo Bangkok weather is not an indoor sensor measurement at the building.",
+    "Occupancy, thermostat settings, schedules, and solar/internal gains are unavailable.",
+    "Partial AC component rows are excluded instead of imputed."
+  ]
+}

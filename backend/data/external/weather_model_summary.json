@@ -1,0 +1,79 @@
+{
+  "timezone": "Asia/Bangkok",
+  "hourly_zone_rows_before_features": 17664,
+  "complete_rows_used": 17493,
+  "excluded_rows_missing_target_weather_or_lag": 171,
+  "train_start": "2018-07-01T00:00:00+07:00",
+  "train_end": "2018-11-06T18:00:00+07:00",
+  "test_start": "2018-11-06T19:00:00+07:00",
+  "test_end": "2018-12-31T23:00:00+07:00",
+  "split_timestamp": "2018-11-06T19:00:00+07:00",
+  "train_rows": 12193,
+  "test_rows": 5300,
+  "source_summary": {
+    "Floor1.csv": {
+      "rows": 264960,
+      "ac_zones": 1,
+      "partial_ac_rows_excluded": 1518
+    },
+    "Floor2.csv": {
+      "rows": 264960,
+      "ac_zones": 3,
+      "partial_ac_rows_excluded": 589
+    }
+  },
+  "missing_weather_rows": 0,
+  "missing_ac_rows": 34,
+  "Model A_features": {
+    "numeric_features": [
+      "lag_1h_kw",
+      "lag_24h_kw",
+      "hour_sin",
+      "hour_cos",
+      "weekday_sin",
+      "weekday_cos"
+    ],
+    "categorical_features": [
+      "floor_Floor1",
+      "floor_Floor2",
+      "zone_z1",
+      "zone_z2",
+      "zone_z4"
+    ]
+  },
+  "Model B_features": {
+    "numeric_features": [
+      "lag_1h_kw",
+      "lag_24h_kw",
+      "hour_sin",
+      "hour_cos",
+      "weekday_sin",
+      "weekday_cos",
+      "temperature_2m_c",
+      "relative_humidity_2m_pct"
+    ],
+    "categorical_features": [
+      "floor_Floor1",
+      "floor_Floor2",
+      "zone_z1",
+      "zone_z2",
+      "zone_z4"
+    ]
+  },
+  "ridge_alpha": 1.0,
+  "test_fraction_by_timestamp": 0.3,
+  "results": {
+    "overall_mae_improvement_pct": 0.1929209672685906,
+    "overall_rmse_improvement_pct": 0.02644879798905539,
+    "overall_model_a": {
+      "mae_kw": 2.936977263255336,
+      "rmse_kw": 6.408679537184682,
+      "r2": 0.8527191447105354
+    },
+    "overall_model_b": {
+      "mae_kw": 2.931311218310605,
+      "rmse_kw": 6.406984518480126,
+      "r2": 0.8527970424394505
+    }
+  }
+}

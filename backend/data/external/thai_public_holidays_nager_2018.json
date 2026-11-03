@@ -1,0 +1,16 @@
+{
+  "api_url": "https://date.nager.at/api/v3/PublicHolidays/2018/TH",
+  "http_status": 204,
+  "response_schema": "invalid",
+  "item_count": null,
+  "duplicate_dates": [],
+  "out_of_range_dates": [],
+  "missing_required_fields": true,
+  "errors": [
+    "Response body is not a JSON array",
+    "Unexpected HTTP status: 204"
+  ],
+  "usable_for_model": false,
+  "raw_response": "",
+  "response": null
+}
