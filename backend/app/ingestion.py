@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
-from decimal import Decimal
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -14,7 +14,6 @@ from ..process_dataset import (
     MIN_ABSOLUTE_SCALE_KW,
     MIN_BASELINE_POINTS,
     MIN_RELATIVE_SCALE,
-    add_expected_usage,
     aggregate_power,
     classify_anomaly,
 )
@@ -30,20 +29,51 @@ def _raw_path(floor: str) -> Path:
     return RAW_DIR / f"2018{floor}.csv"
 
 
-def evaluate_observation(timestamp: datetime, floor: str, zone: str, load_type: str, actual_kw: float, interval_minutes: int) -> dict:
-    path = _raw_path(floor)
-    frame = pd.read_csv(path, parse_dates=["Date"])
+@lru_cache(maxsize=2)
+def _historical_baseline(floor: str) -> pd.DataFrame:
+    """Load one floor and prepare only the statistics required by ingestion."""
+    frame = pd.read_csv(_raw_path(floor), parse_dates=["Date"])
     historical = aggregate_power(frame, floor)
-    historical = add_expected_usage(historical)
+    historical["weekday"] = historical["timestamp"].dt.day_of_week
+    historical["minute_of_day"] = (
+        historical["timestamp"].dt.hour * 60 + historical["timestamp"].dt.minute
+    )
+    group_columns = ["zone", "load_type", "weekday", "minute_of_day"]
+    grouped = historical.groupby(group_columns, dropna=False)["actual_kw"]
+    statistics = grouped.agg(["count", "median"]).reset_index()
+    historical = historical.merge(
+        statistics[group_columns + ["median"]],
+        on=group_columns,
+        how="left",
+    )
+    historical["absolute_deviation"] = (
+        historical["actual_kw"] - historical["median"]
+    ).abs()
+    mad = (
+        historical.groupby(group_columns, dropna=False)["absolute_deviation"]
+        .median()
+        .rename("mad")
+        .reset_index()
+    )
+    statistics = statistics.merge(mad, on=group_columns, how="left")
+    insufficient = statistics["count"] < MIN_BASELINE_POINTS
+    statistics.loc[insufficient, ["median", "mad"]] = pd.NA
+    return statistics.rename(columns={"median": "expected_kw", "mad": "mad_kw"})[
+        group_columns + ["expected_kw", "mad_kw"]
+    ]
+
+
+def evaluate_observation(timestamp: datetime, floor: str, zone: str, load_type: str, actual_kw: float, interval_minutes: int) -> dict:
+    historical = _historical_baseline(floor)
     candidates = historical[
         (historical["zone"] == zone)
         & (historical["load_type"] == load_type)
         & (historical["weekday"] == timestamp.weekday())
         & (historical["minute_of_day"] == timestamp.hour * 60 + timestamp.minute)
     ]
-    valid = candidates["actual_kw"].dropna()
-    expected = float(valid.median()) if len(valid) >= MIN_BASELINE_POINTS else None
-    mad = float((valid - expected).abs().median()) if expected is not None else None
+    baseline = candidates.iloc[0] if not candidates.empty else None
+    expected = float(baseline["expected_kw"]) if baseline is not None and pd.notna(baseline["expected_kw"]) else None
+    mad = float(baseline["mad_kw"]) if baseline is not None and pd.notna(baseline["mad_kw"]) else None
     robust_scale = max(
         MAD_SCALE * mad if mad is not None else 0,
         abs(expected) * MIN_RELATIVE_SCALE if expected is not None else 0,

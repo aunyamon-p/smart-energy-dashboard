@@ -1,13 +1,51 @@
 import os
 from pathlib import Path
 
-os.environ["DATABASE_URL"] = "sqlite:///./backend/data/smart_energy.db"
+import shutil
+import tempfile
+import atexit
+from datetime import datetime
+from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+PRODUCTION_DATABASE = Path(__file__).resolve().parents[1] / "data" / "smart_energy.db"
+TEST_DIRECTORY = Path(tempfile.mkdtemp(prefix="smart-energy-tests-"))
+TEST_DATABASE = TEST_DIRECTORY / "smart_energy_test.db"
+shutil.copy2(PRODUCTION_DATABASE, TEST_DATABASE)
+os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DATABASE.as_posix()}"
+
+from backend.app import ingestion
+from backend.app.db import get_db
 from backend.app.main import app
 
 
+test_engine = create_engine(
+    f"sqlite:///{TEST_DATABASE.as_posix()}",
+    connect_args={"check_same_thread": False},
+    future=True,
+)
+TestSessionLocal = sessionmaker(bind=test_engine, autoflush=False, expire_on_commit=False)
+
+
+@atexit.register
+def cleanup_test_database():
+    app.dependency_overrides.clear()
+    test_engine.dispose()
+    shutil.rmtree(TEST_DIRECTORY, ignore_errors=True)
+
+
+def override_get_db():
+    db = TestSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 
@@ -34,6 +72,139 @@ def test_alert_list_filters():
     body = response.json()
     assert body["pagination"]["total"] >= 10310
     assert all(row["severity"] == "High" for row in body["data"])
+
+
+def test_alert_sorting_happens_before_pagination():
+    event_time_page = client.get("/api/alerts", params={"sort": "event_time", "page": 1, "page_size": 2})
+    recently_added_page = client.get("/api/alerts", params={"sort": "recently_added", "page": 1, "page_size": 2})
+    assert event_time_page.status_code == 200
+    assert recently_added_page.status_code == 200
+    event_time_rows = event_time_page.json()["data"]
+    recently_added_rows = recently_added_page.json()["data"]
+    assert event_time_rows[0]["start_timestamp"] >= event_time_rows[1]["start_timestamp"]
+    assert recently_added_rows[0]["created_at"] >= recently_added_rows[1]["created_at"]
+
+    second_page = client.get("/api/alerts", params={"sort": "event_time", "page": 2, "page_size": 2})
+    assert second_page.status_code == 200
+    assert not {row["alert_id"] for row in event_time_rows}.intersection(
+        row["alert_id"] for row in second_page.json()["data"]
+    )
+
+
+def test_ingest_normal_observation_creates_no_alert():
+    response = client.post(
+        "/api/ingest",
+        json={
+            "source_id": "AUTOMATED-TEST-NORMAL-001",
+            "timestamp": "2026-11-01T10:01:00+07:00",
+            "floor": "Floor1",
+            "zone": "z2",
+            "load_type": "AC",
+            "actual_kw": 45.73,
+            "interval_minutes": 1,
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["anomaly_detected"] is False
+    assert body["alert_id"] is None
+
+
+def test_ingest_reuses_prepared_floor_baseline(monkeypatch):
+    ingestion._historical_baseline.cache_clear()
+    original_read_csv = ingestion.pd.read_csv
+    reads = []
+
+    def tracked_read_csv(*args, **kwargs):
+        reads.append(args[0])
+        return original_read_csv(*args, **kwargs)
+
+    monkeypatch.setattr(ingestion.pd, "read_csv", tracked_read_csv)
+    ingestion.evaluate_observation(
+        datetime.fromisoformat("2026-11-01T10:01:00+07:00"),
+        "Floor1",
+        "z2",
+        "AC",
+        45.73,
+        1,
+    )
+    ingestion.evaluate_observation(
+        datetime.fromisoformat("2026-11-01T10:02:00+07:00"),
+        "Floor1",
+        "z2",
+        "AC",
+        45.73,
+        1,
+    )
+    assert reads == [ingestion.RAW_DIR / "2018Floor1.csv"]
+
+
+def test_ingest_anomaly_creates_alert_and_evidence():
+    response = client.post(
+        "/api/ingest",
+        json={
+            "source_id": "AUTOMATED-TEST-ANOMALY-001",
+            "timestamp": "2026-11-02T10:00:00+07:00",
+            "floor": "Floor1",
+            "zone": "z2",
+            "load_type": "AC",
+            "actual_kw": 457.3,
+            "interval_minutes": 1,
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["anomaly_detected"] is True
+    assert body["alert_id"] == "INGEST-EVENT-AUTOMATED-TEST-ANOMALY-001"
+    detail = client.get(f"/api/alerts/{body['alert_id']}")
+    assert detail.status_code == 200
+    assert len(detail.json()["data"]["evidence"]) == 1
+    assert detail.json()["data"]["created_at"] is not None
+
+
+def test_ingest_duplicate_source_id_returns_conflict():
+    response = client.post(
+        "/api/ingest",
+        json={
+            "source_id": "AUTOMATED-TEST-DUPLICATE-001",
+            "timestamp": "2026-11-01T10:01:00+07:00",
+            "floor": "Floor1",
+            "zone": "z2",
+            "load_type": "AC",
+            "actual_kw": 45.73,
+            "interval_minutes": 1,
+        },
+    )
+    assert response.status_code == 201
+    duplicate = client.post(
+        "/api/ingest",
+        json={
+            "source_id": "AUTOMATED-TEST-DUPLICATE-001",
+            "timestamp": "2026-11-01T10:01:00+07:00",
+            "floor": "Floor1",
+            "zone": "z2",
+            "load_type": "AC",
+            "actual_kw": 45.73,
+            "interval_minutes": 1,
+        },
+    )
+    assert duplicate.status_code == 409
+
+
+def test_ingest_negative_actual_returns_unprocessable_entity():
+    response = client.post(
+        "/api/ingest",
+        json={
+            "source_id": "AUTOMATED-TEST-NEGATIVE-001",
+            "timestamp": "2026-11-03T10:00:00+07:00",
+            "floor": "Floor1",
+            "zone": "z2",
+            "load_type": "AC",
+            "actual_kw": -1,
+            "interval_minutes": 1,
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_alert_detail_contains_evidence_and_weather_for_ac():
