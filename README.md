@@ -53,6 +53,52 @@ Terminal 1 — Backend:
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
+For App Runner, build from the repository root using the included
+`Dockerfile`. The container listens on port `8000` and binds to `0.0.0.0`.
+
+### PostgreSQL and migrations
+
+Local development defaults to SQLite. For PostgreSQL, install the backend
+requirements and set a SQLAlchemy URL such as:
+
+```text
+DATABASE_URL=postgresql+psycopg://user:password@host:5432/database
+APP_ENV=production
+```
+
+Run migrations before starting a production container:
+
+```powershell
+alembic upgrade head
+```
+
+The application only calls `create_all()` automatically outside production.
+
+### Historical dataset storage
+
+Local development reads `backend\data\raw\2018Floor1.csv` and
+`2018Floor2.csv`. To read the same files from S3, set:
+
+```text
+HISTORICAL_DATASET_MODE=s3
+HISTORICAL_DATASET_S3_BUCKET=your-bucket
+HISTORICAL_DATASET_S3_PREFIX=historical/raw
+```
+
+The runtime uses the AWS SDK credential chain; no credentials are stored in
+the repository.
+
+### IoT Core and Lambda
+
+The Lambda entrypoint is `backend.lambda_adapter.handler.lambda_handler`.
+Configure `INGEST_API_URL` to the App Runner `/api/ingest` URL. An optional
+`INGEST_API_TOKEN` is forwarded as a Bearer token. The local simulator is
+`tools\mqtt_simulator.py`; install its separate dependency file before use.
+
+The MQTT message body must contain the same JSON fields accepted by
+`POST /api/ingest`: `source_id`, `timestamp`, `floor`, `zone`, `load_type`,
+`actual_kw`, and optionally `interval_minutes`.
+
 Terminal 2 — Frontend:
 
 ```powershell

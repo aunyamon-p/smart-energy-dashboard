@@ -17,6 +17,7 @@ from ..process_dataset import (
     aggregate_power,
     classify_anomaly,
 )
+from .config import get_settings
 
 TIMEZONE = timezone(timedelta(hours=7))
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,10 +30,25 @@ def _raw_path(floor: str) -> Path:
     return RAW_DIR / f"2018{floor}.csv"
 
 
+def _historical_frame(floor: str) -> pd.DataFrame:
+    settings = get_settings()
+    if not settings.historical_dataset_is_s3:
+        return pd.read_csv(_raw_path(floor), parse_dates=["Date"])
+    if not settings.historical_dataset_s3_bucket:
+        raise ValueError("HISTORICAL_DATASET_S3_BUCKET is required in S3 mode")
+    try:
+        import boto3
+    except ImportError as error:
+        raise ValueError("boto3 is required in S3 mode") from error
+    key = f"{settings.historical_dataset_s3_prefix.rstrip('/')}/2018{floor}.csv"
+    response = boto3.client("s3").get_object(Bucket=settings.historical_dataset_s3_bucket, Key=key)
+    return pd.read_csv(response["Body"], parse_dates=["Date"])
+
+
 @lru_cache(maxsize=2)
 def _historical_baseline(floor: str) -> pd.DataFrame:
     """Load one floor and prepare only the statistics required by ingestion."""
-    frame = pd.read_csv(_raw_path(floor), parse_dates=["Date"])
+    frame = _historical_frame(floor)
     historical = aggregate_power(frame, floor)
     historical["weekday"] = historical["timestamp"].dt.day_of_week
     historical["minute_of_day"] = (

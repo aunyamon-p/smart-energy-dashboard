@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import get_settings
@@ -29,6 +30,8 @@ router = APIRouter()
 TIMEZONE = "Asia/Bangkok"
 UTC_PLUS_7 = timezone(timedelta(hours=7))
 VALID_LOAD_TYPES = {"AC", "Light", "Plug"}
+VALID_FLOORS = {"Floor1", "Floor2"}
+VALID_ZONES = {"z1", "z2", "z3", "z4"}
 VALID_STATUSES = {"New", "Acknowledged", "Resolved"}
 DATASET_VERSION = "runtime-ingest"
 
@@ -154,8 +157,10 @@ def ingest_energy(payload: IngestEnergyRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail="source_id must not be empty")
     if payload.actual_kw < 0:
         raise HTTPException(status_code=422, detail="actual_kw must be non-negative")
-    if payload.interval_minutes < 1 or payload.interval_minutes > 60:
-        raise HTTPException(status_code=422, detail="interval_minutes must be between 1 and 60")
+    if payload.floor not in VALID_FLOORS:
+        raise HTTPException(status_code=422, detail="Invalid floor")
+    if payload.zone not in VALID_ZONES:
+        raise HTTPException(status_code=422, detail="Invalid zone")
     timestamp = normalize_timestamp(payload.timestamp)
     if db.scalar(select(IngestedEnergy).where(IngestedEnergy.source_id == payload.source_id)):
         raise HTTPException(status_code=409, detail="source_id already exists")
@@ -223,7 +228,16 @@ def ingest_energy(payload: IngestEnergyRequest, db: Session = Depends(get_db)):
         alert_id=alert_id,
         dataset_version=DATASET_VERSION,
     ))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        constraint = str(error.orig).lower()
+        if "source_id" in constraint or "uq_ingested_energy_source_id" in constraint:
+            raise HTTPException(status_code=409, detail="source_id already exists") from error
+        if "alert_id" in constraint or "point_alert_id" in constraint:
+            raise HTTPException(status_code=409, detail="Generated alert ID already exists") from error
+        raise
     return {**payload.model_dump(), **result, "timestamp": timestamp, "alert_id": alert_id}
 
 

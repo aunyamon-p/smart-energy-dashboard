@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .db import Base, engine, ensure_schema_compatibility
@@ -7,8 +8,9 @@ from .routes import router
 
 
 settings = get_settings()
-Base.metadata.create_all(bind=engine)
-ensure_schema_compatibility()
+if settings.app_env.lower() != "production":
+    Base.metadata.create_all(bind=engine)
+    ensure_schema_compatibility()
 
 app = FastAPI(title="Smart Energy Intelligence API", version="1.0.0")
 app.add_middleware(
@@ -19,3 +21,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router, prefix="/api")
+
+
+@app.get("/health", include_in_schema=False)
+def health() -> JSONResponse:
+    return JSONResponse({"status": "ok"})

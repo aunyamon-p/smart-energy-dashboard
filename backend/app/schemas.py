@@ -1,7 +1,8 @@
 from datetime import date, datetime, timezone, timedelta
+import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 
 class PageInfo(BaseModel):
@@ -117,13 +118,34 @@ class StatusUpdate(BaseModel):
 
 
 class IngestEnergyRequest(BaseModel):
-    source_id: str
+    source_id: str = Field(min_length=1, max_length=128)
     timestamp: datetime
-    floor: str
-    zone: str
+    floor: str = Field(min_length=1, max_length=32)
+    zone: str = Field(min_length=1, max_length=32)
     load_type: Literal["AC", "Light", "Plug"]
-    actual_kw: float
-    interval_minutes: int = 1
+    actual_kw: float = Field(ge=0)
+    interval_minutes: int = Field(default=1, ge=1, le=60)
+
+    @field_validator("source_id", "floor", "zone", mode="before")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("text fields must not be empty")
+        return value
+
+    @field_validator("actual_kw")
+    @classmethod
+    def validate_actual_kw(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("actual_kw must be finite")
+        return value
+
+    @field_validator("interval_minutes")
+    @classmethod
+    def validate_interval(cls, value: int) -> int:
+        if value < 1 or value > 60:
+            raise ValueError("interval_minutes must be between 1 and 60")
+        return value
 
 
 class IngestEnergyResponse(BaseModel):

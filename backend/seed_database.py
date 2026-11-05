@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import argparse
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from sqlalchemy import select
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -50,7 +52,7 @@ def decimal_value(value):
     return None if pd.isna(value) else value
 
 
-def seed() -> dict[str, int | str]:
+def seed(replace: bool = False) -> dict[str, int | str]:
     Base.metadata.create_all(bind=engine)
     dataset_version = version()
     daily = pd.read_csv(PROCESSED / "processed_energy_daily.csv")
@@ -65,11 +67,31 @@ def seed() -> dict[str, int | str]:
     weather_ac["timestamp"] = timestamp_series(weather_ac["timestamp"])
 
     with SessionLocal.begin() as db:
-        db.query(AnomalyEvidence).delete()
-        db.query(AlertEvent).delete()
-        db.query(EnergyDaily).delete()
-        db.query(WeatherAcHourly).delete()
-        db.query(WeatherHourly).delete()
+        existing_version = db.scalar(
+            select(EnergyDaily.dataset_version)
+            .where(EnergyDaily.dataset_version.is_not(None))
+            .limit(1)
+        )
+        if existing_version and existing_version != dataset_version and not replace:
+            raise RuntimeError(
+                "Database already contains a different dataset version; "
+                "rerun with --replace only after taking a backup"
+            )
+        if existing_version == dataset_version and not replace:
+            return {
+                "dataset_version": dataset_version,
+                "energy_daily": db.query(EnergyDaily).count(),
+                "alert_events": db.query(AlertEvent).count(),
+                "anomaly_evidence": db.query(AnomalyEvidence).count(),
+                "weather_hourly": db.query(WeatherHourly).count(),
+                "weather_ac_hourly": db.query(WeatherAcHourly).count(),
+            }
+        if replace:
+            db.query(AnomalyEvidence).delete()
+            db.query(AlertEvent).delete()
+            db.query(EnergyDaily).delete()
+            db.query(WeatherAcHourly).delete()
+            db.query(WeatherHourly).delete()
         db.bulk_insert_mappings(
             EnergyDaily,
             [
@@ -170,4 +192,10 @@ def seed() -> dict[str, int | str]:
 
 
 if __name__ == "__main__":
-    print(seed())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Replace imported historical tables after a backup; never affects ingested_energy",
+    )
+    print(seed(replace=parser.parse_args().replace))

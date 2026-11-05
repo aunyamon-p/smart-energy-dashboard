@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     app_env: str = "development"
     page_size_default: int = 50
     page_size_max: int = 200
+    historical_dataset_mode: str = "local"
+    historical_dataset_s3_bucket: str | None = None
+    historical_dataset_s3_prefix: str = "historical/raw"
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_ENV_FILE,
@@ -40,6 +43,10 @@ class Settings(BaseSettings):
             database_path = PROJECT_ROOT / database_path
         database_path.parent.mkdir(parents=True, exist_ok=True)
         return f"sqlite:///{database_path.resolve().as_posix()}"
+
+    @property
+    def historical_dataset_is_s3(self) -> bool:
+        return self.historical_dataset_mode.lower() == "s3"
 
 
 @lru_cache

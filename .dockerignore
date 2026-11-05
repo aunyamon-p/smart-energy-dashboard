@@ -1,0 +1,11 @@
+.git
+.venv
+frontend
+backend/data/smart_energy.db
+backend/data/processed
+backend/data/external
+backend/tests
+__pycache__
+*.pyc
+.env
+backend/.env
