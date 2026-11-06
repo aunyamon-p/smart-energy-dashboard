@@ -1,6 +1,7 @@
 .git
 .venv
 frontend
+backend/data/
 backend/data/smart_energy.db
 backend/data/processed
 backend/data/external
