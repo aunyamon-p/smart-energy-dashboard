@@ -43,6 +43,16 @@ Copy-Item .env.example .env
 VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
+กำหนด origin ที่อนุญาตให้เรียก Backend ผ่าน `backend\.env` หรือ environment
+variable ของ ECS ได้ โดยคั่นหลาย origin ด้วย comma:
+
+```text
+CORS_ORIGINS=http://localhost:5173
+```
+
+ค่าใน ECS จะ override ค่า default นี้โดยอัตโนมัติ จึงสามารถระบุ production
+frontend origin ใน ECS task definition ได้โดยไม่ต้องใส่ URL ดังกล่าวใน source code
+
 ## วิธีรัน Local
 
 เปิด Terminal แยกกัน 2 หน้าต่างจาก Project Root
