@@ -32,6 +32,18 @@ export type EnergyRow = {
   partial_component_observations: number
 }
 
+export type RealtimeEnergyRow = {
+  source_id: string
+  timestamp: string
+  floor: string
+  zone: string
+  load_type: LoadType
+  actual_kw: number
+  actual_kwh: number
+  anomaly_detected: boolean
+  alert_id: string | null
+}
+
 export type Alert = {
   alert_id: string
   created_at: string
@@ -117,6 +129,7 @@ function query(params: Record<string, string | number | undefined>) {
 export const api = {
   summary: (params: Record<string, string | undefined>) => request<DashboardSummary>(`/api/dashboard/summary?${query(params)}`),
   energy: (params: Record<string, string | number | undefined>) => request<Page<EnergyRow>>(`/api/energy?${query({ ...params, page_size: 200 })}`),
+  realtimeEnergy: (params: Record<string, string | number | undefined>) => request<Page<RealtimeEnergyRow> & { timezone: string }>(`/api/energy/realtime?${query({ ...params, page_size: 200 })}`),
   alerts: (params: Record<string, string | number | undefined>) => request<Page<Alert>>(`/api/alerts?${query({ ...params, page_size: 100 })}`),
   alert: (id: string) => request<{ data: AlertDetail }>(`/api/alerts/${encodeURIComponent(id)}`),
   updateAlert: (id: string, status: AlertStatus) => request<Alert>(`/api/alerts/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }) }),

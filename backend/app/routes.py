@@ -21,6 +21,7 @@ from .schemas import (
     IngestEnergyRequest,
     IngestEnergyResponse,
     PageInfo,
+    RealtimeEnergyListResponse,
     StatusUpdate,
     WeatherContext,
 )
@@ -131,6 +132,55 @@ def get_energy(
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = db.scalars(base.order_by(EnergyDaily.date, EnergyDaily.floor, EnergyDaily.zone, EnergyDaily.load_type).offset((page - 1) * page_size).limit(page_size)).all()
     return {"data": rows, "pagination": {"page": page, "page_size": page_size, "total": total}, "timezone": TIMEZONE}
+
+
+@router.get("/energy/realtime", response_model=RealtimeEnergyListResponse)
+def get_realtime_energy(
+    since: datetime | None = None,
+    floor: str | None = None,
+    zone: str | None = None,
+    load_type: str | None = None,
+    page: int = 1,
+    page_size: int = 200,
+    db: Session = Depends(get_db),
+):
+    page, page_size = page_params(page, page_size)
+    validate_load_type(load_type)
+    query = select(IngestedEnergy)
+    if since:
+        query = query.where(IngestedEnergy.timestamp >= normalize_timestamp(since))
+    for column, value in (
+        (IngestedEnergy.floor, floor),
+        (IngestedEnergy.zone, zone),
+        (IngestedEnergy.load_type, load_type),
+    ):
+        if value:
+            query = query.where(column == value)
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    rows = db.scalars(
+        query.order_by(IngestedEnergy.timestamp.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    rows = list(reversed(rows))
+    return {
+        "data": [
+            {
+                "source_id": row.source_id,
+                "timestamp": row.timestamp.replace(tzinfo=UTC_PLUS_7),
+                "floor": row.floor,
+                "zone": row.zone,
+                "load_type": row.load_type,
+                "actual_kw": row.actual_kw,
+                "actual_kwh": row.actual_kw * row.interval_minutes / 60,
+                "anomaly_detected": row.anomaly_detected,
+                "alert_id": row.alert_id,
+            }
+            for row in rows
+        ],
+        "pagination": {"page": page, "page_size": page_size, "total": total},
+        "timezone": TIMEZONE,
+    }
 
 
 @router.get("/alerts", response_model=AlertListResponse)

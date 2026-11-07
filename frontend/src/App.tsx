@@ -3,7 +3,7 @@ import { NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom
 import { AlertTriangle, ChevronLeft, Clock3, Leaf, LayoutDashboard, Search, SlidersHorizontal, Thermometer, Zap } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from './api'
-import type { Alert, AlertDetail as AlertDetailType, AlertStatus, DashboardSummary, EnergyRow, LoadType, Severity } from './api'
+import type { Alert, AlertDetail as AlertDetailType, AlertStatus, DashboardSummary, EnergyRow, LoadType, RealtimeEnergyRow, Severity } from './api'
 
 const INITIAL_FILTERS = { start_date: '2018-07-01', end_date: '2018-12-31', floor: '', zone: '', load_type: '' }
 const floors = ['Floor1', 'Floor2']
@@ -58,16 +58,42 @@ function Overview() {
   const [filters, setFilters] = useState(INITIAL_FILTERS)
   const summary = useSummary(filters)
   const [energy, setEnergy] = useState<EnergyRow[]>([])
+  const [realtimeEnergy, setRealtimeEnergy] = useState<RealtimeEnergyRow[]>([])
   const [weather, setWeather] = useState<Awaited<ReturnType<typeof api.weatherAc>> | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
     let active = true
-    const load = () => Promise.all([api.energy(filters), api.weatherAc({ start_date: filters.start_date, end_date: filters.end_date, floor: filters.floor || undefined, zone: filters.zone || undefined })]).then(([energyData, weatherData]) => { if (active) { setEnergy(energyData.data); setWeather(weatherData) } }).catch(e => { if (active) setError(e.message) })
+    const load = () => Promise.all([
+      api.energy(filters),
+      api.realtimeEnergy({ floor: filters.floor || undefined, zone: filters.zone || undefined, load_type: filters.load_type || undefined }),
+      api.weatherAc({ start_date: filters.start_date, end_date: filters.end_date, floor: filters.floor || undefined, zone: filters.zone || undefined }),
+    ]).then(([energyData, realtimeData, weatherData]) => {
+      if (active) {
+        setEnergy(energyData.data)
+        setRealtimeEnergy(realtimeData.data)
+        setWeather(weatherData)
+        setError('')
+      }
+    }).catch(e => { if (active) setError(e.message) })
     load()
-    const interval = window.setInterval(load, 15000)
+    const interval = window.setInterval(load, 5000)
     return () => { active = false; window.clearInterval(interval) }
   }, [filters])
-  const trend = useMemo(() => energy.slice().sort((a, b) => a.date.localeCompare(b.date)).map(row => ({ day: row.date.slice(5), actual: row.actual_energy_kwh ?? 0, expected: row.expected_energy_kwh ?? 0 })), [energy])
+  const trend = useMemo(() => {
+    const historical = energy.map(row => ({
+      day: row.date.slice(5),
+      actual: row.actual_energy_kwh ?? 0,
+      expected: row.expected_energy_kwh ?? 0,
+      timestamp: row.date,
+    }))
+    const live = realtimeEnergy.map(row => ({
+      day: formatTimestamp(row.timestamp),
+      actual: row.actual_kwh,
+      expected: null,
+      timestamp: row.timestamp,
+    }))
+    return [...historical, ...live].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+  }, [energy, realtimeEnergy])
   if (summary.loading) return <LoadingState />
   if (summary.error) return <ErrorState error={summary.error} />
   const data = summary.data!

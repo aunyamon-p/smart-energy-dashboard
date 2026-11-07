@@ -110,6 +110,33 @@ def test_ingest_normal_observation_creates_no_alert():
     assert body["alert_id"] is None
 
 
+def test_realtime_energy_includes_ingested_observation():
+    source_id = "AUTOMATED-TEST-REALTIME-001"
+    response = client.post(
+        "/api/ingest",
+        json={
+            "source_id": source_id,
+            "timestamp": "2026-11-07T22:07:00+07:00",
+            "floor": "Floor1",
+            "zone": "z2",
+            "load_type": "AC",
+            "actual_kw": 90.0,
+            "interval_minutes": 1,
+        },
+    )
+    assert response.status_code == 201
+    realtime = client.get(
+        "/api/energy/realtime",
+        params={"floor": "Floor1", "zone": "z2", "load_type": "AC"},
+    )
+    assert realtime.status_code == 200
+    body = realtime.json()
+    row = next(item for item in body["data"] if item["source_id"] == source_id)
+    assert row["actual_kw"] == 90.0
+    assert row["actual_kwh"] == 1.5
+    assert row["anomaly_detected"] is True
+
+
 def test_ingest_reuses_prepared_floor_baseline(monkeypatch):
     ingestion._historical_baseline.cache_clear()
     original_read_csv = ingestion.pd.read_csv

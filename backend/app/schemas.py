@@ -178,6 +178,30 @@ class EnergyListResponse(BaseModel):
     timezone: str
 
 
+class RealtimeEnergyResponse(BaseModel):
+    source_id: str
+    timestamp: datetime
+    floor: str
+    zone: str
+    load_type: Literal["AC", "Light", "Plug"]
+    actual_kw: float
+    actual_kwh: float
+    anomaly_detected: bool
+    alert_id: str | None
+
+    @field_serializer("timestamp")
+    def serialize_timestamp(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone(timedelta(hours=7)))
+        return value.isoformat()
+
+
+class RealtimeEnergyListResponse(BaseModel):
+    data: list[RealtimeEnergyResponse]
+    pagination: PageInfo
+    timezone: str
+
+
 class AlertListResponse(BaseModel):
     data: list[AlertResponse]
     pagination: PageInfo

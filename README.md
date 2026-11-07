@@ -99,6 +99,11 @@ The MQTT message body must contain the same JSON fields accepted by
 `POST /api/ingest`: `source_id`, `timestamp`, `floor`, `zone`, `load_type`,
 `actual_kw`, and optionally `interval_minutes`.
 
+The Overview energy chart keeps using `/api/energy` for historical daily
+records and polls `/api/energy/realtime` every five seconds for observations
+stored by `/api/ingest`. The live observations are rendered alongside the
+historical trend without requiring a browser refresh.
+
 Terminal 2 — Frontend:
 
 ```powershell
