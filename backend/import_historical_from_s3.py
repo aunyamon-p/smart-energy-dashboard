@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import Integer, select, tuple_
+from sqlalchemy import and_, select
 from sqlalchemy.exc import SQLAlchemyError
 
 if __package__ in (None, ""):
@@ -151,19 +151,9 @@ def clean(value: Any) -> Any:
         return value
     if isinstance(value, Decimal):
         return value
-    if isinstance(value, float):
+    if isinstance(value, (float, int)):
         return Decimal(str(value))
-    if isinstance(value, int):
-        return value
     return value
-
-
-def clean_model_values(model: Any, values: dict[str, Any]) -> dict[str, Any]:
-    cleaned = {field: clean(value) for field, value in values.items()}
-    for field, value in cleaned.items():
-        if isinstance(model.__table__.columns[field].type, Integer) and value is not None:
-            cleaned[field] = int(value)
-    return cleaned
 
 
 def same_value(left: Any, right: Any) -> bool:
@@ -182,6 +172,29 @@ def validate_source_keys(frame: pd.DataFrame, key_fields: tuple[str, ...], filen
     if not duplicates.empty:
         sample = duplicates.iloc[0].to_dict()
         raise ValueError(f"{filename} contains duplicate unique key: {sample}")
+
+
+def insert_if_missing(
+    db,
+    model,
+    values: dict[str, Any],
+    key_fields: tuple[str, ...],
+    protected_prefix: str | None = None,
+) -> str:
+    identifier = values.get(key_fields[0])
+    if protected_prefix and isinstance(identifier, str) and identifier.startswith(protected_prefix):
+        raise ValueError(f"Refusing to import protected realtime identifier: {identifier}")
+    conditions = [getattr(model, field) == values[field] for field in key_fields]
+    existing = db.scalar(select(model).where(and_(*conditions)))
+    if existing is None:
+        db.add(model(**values))
+        return "insert"
+    for field, value in values.items():
+        if not same_value(getattr(existing, field), value):
+            raise RuntimeError(
+                f"Conflict in {model.__tablename__} key {identifier!r}: field {field!r} differs"
+            )
+    return "skip"
 
 
 def source_rows(frames: dict[str, pd.DataFrame], dataset_version: str) -> list[tuple[str, Any, tuple[str, ...], dict[str, Any]]]:
@@ -249,93 +262,30 @@ def source_rows(frames: dict[str, pd.DataFrame], dataset_version: str) -> list[t
             ),
             "dataset_version": dataset_version,
         }))
-    return [
-        (table, model, key_fields, clean_model_values(model, values))
-        for table, model, key_fields, values in rows
-    ]
+    return rows
 
 
-def load_existing(
-    db,
-    model: Any,
-    key_fields: tuple[str, ...],
-    value_fields: tuple[str, ...],
-    keys: list[tuple[Any, ...]],
-) -> dict[tuple[Any, ...], dict[str, Any]]:
-    if not keys:
-        return {}
-    fields = tuple(dict.fromkeys((*key_fields, *value_fields)))
-    columns = [getattr(model, field) for field in fields]
-    existing: dict[tuple[Any, ...], dict[str, Any]] = {}
-    chunk_size = max(1, 900 // len(key_fields))
-    for offset in range(0, len(keys), chunk_size):
-        key_chunk = keys[offset:offset + chunk_size]
-        if len(key_fields) == 1:
-            statement = select(*columns).where(columns[0].in_([key[0] for key in key_chunk]))
-        else:
-            statement = select(*columns).where(
-                tuple_(*columns[:len(key_fields)]).in_(key_chunk)
-            )
-        for row in db.execute(statement):
-            mapping = row._mapping
-            normalized = {field: clean(mapping[field]) for field in fields}
-            existing[tuple(normalized[field] for field in key_fields)] = normalized
-    return existing
-
-
-def preflight(
-    db,
-    rows: list[tuple[str, Any, tuple[str, ...], dict[str, Any]]],
-) -> tuple[dict[str, int], dict[str, list[dict[str, Any]]]]:
+def preflight(db, rows: list[tuple[str, Any, tuple[str, ...], dict[str, Any]]]) -> dict[str, int]:
     counts = {
         f"{name}_{action}": 0
         for name in ("energy_daily", "alert_events", "anomaly_evidence", "weather_hourly", "weather_ac_hourly")
         for action in ("inserted", "skipped")
     }
-    pending: dict[str, list[dict[str, Any]]] = {name: [] for name in counts if name.endswith("_inserted")}
-    grouped: dict[str, list[tuple[Any, tuple[str, ...], dict[str, Any]]]] = {}
-    models: dict[str, Any] = {}
     for table, model, key_fields, values in rows:
-        grouped.setdefault(table, []).append((model, key_fields, values))
-        models[table] = model
-    for table, grouped_rows in grouped.items():
-        model = models[table]
-        key_fields = grouped_rows[0][1]
-        keys = [tuple(clean(values[field]) for field in key_fields) for _, _, values in grouped_rows]
-        value_fields = tuple(grouped_rows[0][2].keys())
-        existing = load_existing(db, model, key_fields, value_fields, keys)
-        for _, _, values in grouped_rows:
-            identifier = values.get(key_fields[0])
-            if table in {"alert_events", "anomaly_evidence"} and isinstance(identifier, str) and identifier.startswith("INGEST-"):
-                raise ValueError(f"Refusing to import protected realtime identifier: {identifier}")
-            key = tuple(clean(values[field]) for field in key_fields)
-            current = existing.get(key)
-            if current is None:
-                counts[f"{table}_inserted"] += 1
-                pending[f"{table}_inserted"].append(values)
-                continue
-            for field, value in values.items():
-                if not same_value(current.get(field), value):
-                    raise RuntimeError(
-                        f"Conflict in {model.__tablename__} key {identifier!r}: field {field!r} differs"
-                    )
-            counts[f"{table}_skipped"] += 1
-    return counts, pending
+        protected = "INGEST-" if table in {"alert_events", "anomaly_evidence"} else None
+        action = insert_if_missing(db, model, values, key_fields, protected_prefix=protected)
+        counts[f"{table}_{'inserted' if action == 'insert' else 'skipped'}"] += 1
+    db.rollback()
+    return counts
 
 
 def import_frames(db, frames: dict[str, pd.DataFrame], dataset_version: str) -> dict[str, int]:
     rows = source_rows(frames, dataset_version)
-    counts, pending = preflight(db, rows)
-    models = {
-        "energy_daily_inserted": EnergyDaily,
-        "alert_events_inserted": AlertEvent,
-        "anomaly_evidence_inserted": AnomalyEvidence,
-        "weather_hourly_inserted": WeatherHourly,
-        "weather_ac_hourly_inserted": WeatherAcHourly,
-    }
-    for table, model in models.items():
-        if pending[table]:
-            db.bulk_insert_mappings(model, pending[table])
+    counts = preflight(db, rows)
+    for table, model, key_fields, values in rows:
+        protected = "INGEST-" if table in {"alert_events", "anomaly_evidence"} else None
+        if insert_if_missing(db, model, values, key_fields, protected_prefix=protected) == "insert":
+            db.flush()
     return counts
 
 
