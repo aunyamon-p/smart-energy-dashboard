@@ -44,7 +44,6 @@ function formatTrendAxis(timestamp: number) {
   return new Intl.DateTimeFormat('en-GB', {
     day: '2-digit',
     month: 'short',
-    year: 'numeric',
     timeZone: BANGKOK_TIME_ZONE,
   }).format(timestamp)
 }
@@ -87,6 +86,17 @@ function useSummary(filters: typeof INITIAL_FILTERS) {
   return state
 }
 
+async function fetchAllEnergyRows(filters: typeof INITIAL_FILTERS) {
+  const firstPage = await api.energy({ ...filters, page: 1 })
+  const rows = [...firstPage.data]
+  const pageCount = Math.ceil(firstPage.pagination.total / firstPage.pagination.page_size)
+  for (let page = 2; page <= pageCount; page += 1) {
+    const result = await api.energy({ ...filters, page })
+    rows.push(...result.data)
+  }
+  return rows
+}
+
 function Overview() {
   const [filters, setFilters] = useState(INITIAL_FILTERS)
   const summary = useSummary(filters)
@@ -94,15 +104,25 @@ function Overview() {
   const [realtimeEnergy, setRealtimeEnergy] = useState<RealtimeEnergyRow[]>([])
   const [weather, setWeather] = useState<Awaited<ReturnType<typeof api.weatherAc>> | null>(null)
   const [error, setError] = useState('')
+  const [historicalError, setHistoricalError] = useState('')
+  useEffect(() => {
+    let active = true
+    setEnergy([])
+    setHistoricalError('')
+    fetchAllEnergyRows(filters).then(rows => {
+      if (active) setEnergy(rows)
+    }).catch(e => {
+      if (active) setHistoricalError(e.message)
+    })
+    return () => { active = false }
+  }, [filters])
   useEffect(() => {
     let active = true
     const load = () => Promise.all([
-      api.energy(filters),
       api.realtimeEnergy({ floor: filters.floor || undefined, zone: filters.zone || undefined, load_type: filters.load_type || undefined }),
       api.weatherAc({ start_date: filters.start_date, end_date: filters.end_date, floor: filters.floor || undefined, zone: filters.zone || undefined }),
-    ]).then(([energyData, realtimeData, weatherData]) => {
+    ]).then(([realtimeData, weatherData]) => {
       if (active) {
-        setEnergy(energyData.data)
         setRealtimeEnergy(realtimeData.data)
         setWeather(weatherData)
         setError('')
@@ -113,22 +133,56 @@ function Overview() {
     return () => { active = false; window.clearInterval(interval) }
   }, [filters])
   const trend = useMemo(() => {
-    const historical = energy.map(row => ({
-      timestamp: Date.parse(`${row.date}T00:00:00+07:00`),
-      actual: row.actual_energy_kwh ?? 0,
-      expected: row.expected_energy_kwh ?? 0,
-    }))
-    const live = realtimeEnergy.map(row => ({
-      timestamp: Date.parse(row.timestamp),
-      actual: row.actual_kwh,
-      expected: null,
-    }))
-    return [...historical, ...live].sort((a, b) => a.timestamp - b.timestamp)
+    const historicalByDate = new Map<string, { actual: number; expected: number }>()
+    for (const row of energy) {
+      const daily = historicalByDate.get(row.date) ?? { actual: 0, expected: 0 }
+      daily.actual += row.actual_energy_kwh ?? 0
+      daily.expected += row.expected_energy_kwh ?? 0
+      historicalByDate.set(row.date, daily)
+    }
+
+    const points = [
+      ...Array.from(historicalByDate, ([date, values]) => ({
+        timestamp: Date.parse(`${date}T00:00:00+07:00`),
+        actual: values.actual,
+        expected: values.expected,
+        kind: 'historical' as const,
+      })),
+      ...realtimeEnergy.map(row => ({
+        timestamp: Date.parse(row.timestamp),
+        actual: row.actual_kwh,
+        expected: null,
+        kind: 'realtime' as const,
+      })),
+    ].sort((a, b) => a.timestamp - b.timestamp)
+
+    const chartData: Array<{
+      timestamp: number
+      actual: number | null
+      expected: number | null
+      kind: 'historical' | 'realtime' | 'gap'
+      index: number
+    }> = []
+    let previous: (typeof points)[number] | undefined
+    for (const point of points) {
+      if (previous && point.kind !== previous.kind) {
+        chartData.push({
+          timestamp: (previous.timestamp + point.timestamp) / 2,
+          actual: null,
+          expected: null,
+          kind: 'gap',
+          index: chartData.length,
+        })
+      }
+      chartData.push({ ...point, index: chartData.length })
+      previous = point
+    }
+    return chartData
   }, [energy, realtimeEnergy])
   if (summary.loading) return <LoadingState />
   if (summary.error) return <ErrorState error={summary.error} />
   const data = summary.data!
-  return <><PageHeading eyebrow="OVERVIEW" title="Energy Overview" subtitle="Live metrics from the CU-BEMS database and cached Open-Meteo context." /><FilterBar value={filters} onChange={setFilters} />{error && <ErrorState error={error} />}<section className="metric-grid"><MetricCard title="Actual Energy" value={formatNumber(data.actual_energy_kwh)} unit="kWh" icon={<Zap size={19} />} tint="teal" /><MetricCard title="Expected Energy" value={formatNumber(data.expected_energy_kwh)} unit="kWh" icon={<ActivityIcon />} tint="blue" /><MetricCard title="Potential Events" value={data.potential_anomaly_event_count.toLocaleString()} unit="events" icon={<AlertTriangle size={19} />} tint="amber" /><MetricCard title="Excess Energy" value={formatNumber(data.excess_energy_kwh)} unit="kWh" icon={<Leaf size={19} />} tint="green" /></section><section className="analytics-grid"><div className="panel trend-panel"><div className="panel-heading"><div><h2>Energy Consumption Trend</h2><p>Actual versus Expected daily energy (kWh)</p></div></div>{trend.length ? <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trend}><CartesianGrid stroke="#edf1f4" vertical={false} /><XAxis dataKey="timestamp" type="number" scale="time" tickFormatter={formatTrendAxis} axisLine={false} tickLine={false} /><YAxis axisLine={false} tickLine={false} /><Tooltip labelFormatter={label => formatTrendTooltip(Number(label))} /><Area type="monotone" dataKey="actual" stroke="#159a8a" fill="#dff3ee" name="Actual" /><Area type="monotone" dataKey="expected" stroke="#9eabb5" fill="none" strokeDasharray="5 5" name="Expected" /></AreaChart></ResponsiveContainer></div> : <EmptyState />}</div><WeatherPanel weather={weather} /></section><section className="panel recent-panel"><div className="panel-heading"><div><h2>Data quality and context</h2><p>Values are sourced from processed CU-BEMS records; missing data is not imputed.</p></div></div><div className="quality-grid"><div><strong>{data.missing_observations.toLocaleString()}</strong><span>Missing observations</span></div><div><strong>{data.partial_component_observations.toLocaleString()}</strong><span>Partial AC observations</span></div><div><strong>{data.severity_counts.High ?? 0}</strong><span>High severity events</span></div><div><strong>{data.cost_status}</strong><span>Cost status</span></div></div></section></>
+  return <><PageHeading eyebrow="OVERVIEW" title="Energy Overview" subtitle="Live metrics from the CU-BEMS database and cached Open-Meteo context." /><FilterBar value={filters} onChange={setFilters} />{(historicalError || error) && <ErrorState error={historicalError || error} />}<section className="metric-grid"><MetricCard title="Actual Energy" value={formatNumber(data.actual_energy_kwh)} unit="kWh" icon={<Zap size={19} />} tint="teal" /><MetricCard title="Expected Energy" value={formatNumber(data.expected_energy_kwh)} unit="kWh" icon={<ActivityIcon />} tint="blue" /><MetricCard title="Potential Events" value={data.potential_anomaly_event_count.toLocaleString()} unit="events" icon={<AlertTriangle size={19} />} tint="amber" /><MetricCard title="Excess Energy" value={formatNumber(data.excess_energy_kwh)} unit="kWh" icon={<Leaf size={19} />} tint="green" /></section><section className="analytics-grid"><div className="panel trend-panel"><div className="panel-heading"><div><h2>Energy Consumption Trend</h2><p>Daily historical totals and realtime readings · year gaps compressed</p></div></div>{trend.length ? <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trend}><CartesianGrid stroke="#edf1f4" vertical={false} /><XAxis dataKey="index" type="category" interval="preserveStartEnd" minTickGap={24} tickFormatter={value => { const point = trend[Number(value)]; return point?.kind === 'gap' || !point ? '…' : formatTrendAxis(point.timestamp) }} axisLine={false} tickLine={false} /><YAxis axisLine={false} tickLine={false} /><Tooltip labelFormatter={label => { const point = trend[Number(label)]; return point?.kind === 'gap' || !point ? 'Historical / realtime boundary' : formatTrendTooltip(point.timestamp) }} /><Area type="monotone" dataKey="actual" stroke="#159a8a" fill="#dff3ee" name="Actual" /><Area type="monotone" dataKey="expected" stroke="#9eabb5" fill="none" strokeDasharray="5 5" name="Expected" /></AreaChart></ResponsiveContainer></div> : <EmptyState />}</div><WeatherPanel weather={weather} /></section><section className="panel recent-panel"><div className="panel-heading"><div><h2>Data quality and context</h2><p>Values are sourced from processed CU-BEMS records; missing data is not imputed.</p></div></div><div className="quality-grid"><div><strong>{data.missing_observations.toLocaleString()}</strong><span>Missing observations</span></div><div><strong>{data.partial_component_observations.toLocaleString()}</strong><span>Partial AC observations</span></div><div><strong>{data.severity_counts.High ?? 0}</strong><span>High severity events</span></div><div><strong>{data.cost_status}</strong><span>Cost status</span></div></div></section></>
 }
 function ActivityIcon() { return <Thermometer size={19} /> }
 function WeatherPanel({ weather }: { weather: Awaited<ReturnType<typeof api.weatherAc>> | null }) {
