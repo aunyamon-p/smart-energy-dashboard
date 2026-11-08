@@ -34,7 +34,7 @@
 - **Data & Database:** Pandas, NumPy, SQLAlchemy และ Alembic; Local ใช้ SQLite และรองรับ PostgreSQL ผ่าน `DATABASE_URL`
 - **AWS integrations ที่มีโค้ดรองรับ:**
   - **Amazon S3:** Backend อ่าน Raw CSV ผ่าน `HISTORICAL_DATASET_MODE=s3`, `HISTORICAL_DATASET_S3_BUCKET` และ `HISTORICAL_DATASET_S3_PREFIX`; Seed อ่าน Processed/Weather CSV เมื่อกำหนด `SEED_SOURCE=s3` และ `HISTORICAL_DATASET_S3_BUCKET`
-  - **AWS Lambda และ AWS IoT Core:** `backend/lambda_adapter/handler.py` รองรับการรับ IoT event แล้วส่งต่อไปยัง Backend `/api/ingest`
+  - **Amazon EventBridge Scheduler → AWS Lambda → Backend API:** Scheduler เรียก Lambda ตามกำหนดเวลา, Lambda ส่ง JSON payload ต่อไปยัง `POST /api/ingest` โดยใช้ `INGEST_API_URL` และรองรับ `INGEST_API_TOKEN` กับ `INGEST_API_TIMEOUT`
 
 ## 6. โครงสร้างโปรเจกต์ (Project Structure)
 
@@ -49,7 +49,7 @@ smart-energy-dashboard/
 │   │   ├── processed/       # Daily energy, anomalies, alert events และ quality report
 │   │   ├── external/        # Weather และผลวิเคราะห์ที่เกี่ยวข้อง
 │   │   └── smart_energy.db  # Local SQLite database
-│   ├── lambda_adapter/      # Lambda handler สำหรับส่ง IoT event เข้า API
+│   ├── lambda_adapter/      # Lambda handler ส่ง scheduled payload ไปยัง Backend API
 │   ├── tests/               # Backend API tests
 │   ├── seed_database.py     # นำเข้าข้อมูล Processed และ Weather
 │   └── requirements.txt
@@ -59,9 +59,6 @@ smart-energy-dashboard/
 │   ├── .env.example         # Vite API URL fallback
 │   ├── index.html
 │   └── package.json
-├── tools/
-│   ├── mqtt_simulator.py    # เครื่องมือจำลองการส่งข้อมูลผ่าน MQTT
-│   └── requirements-simulator.txt
 ├── docs/                    # เอกสารประกอบและรายงานวิเคราะห์
 ├── Dockerfile
 ├── alembic.ini
