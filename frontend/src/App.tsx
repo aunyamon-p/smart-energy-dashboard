@@ -5,7 +5,19 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Scatter, ScatterCh
 import { api } from './api'
 import type { Alert, AlertDetail as AlertDetailType, AlertStatus, DashboardSummary, EnergyRow, LoadType, RealtimeEnergyRow, Severity } from './api'
 
-const INITIAL_FILTERS = { start_date: '2018-07-01', end_date: '2018-12-31', floor: '', zone: '', load_type: '' }
+function getBangkokToday() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+const INITIAL_FILTERS = { start_date: '2018-07-01', end_date: getBangkokToday(), floor: '', zone: '', load_type: '' }
+const ALERT_PAGE_SIZE = 100
 const floors = ['Floor1', 'Floor2']
 const zones = ['z1', 'z2', 'z3', 'z4']
 const loads: LoadType[] = ['AC', 'Light', 'Plug']
@@ -26,7 +38,7 @@ function ErrorState({ error }: { error: string }) { return <div className="state
 function LoadingState() { return <div className="state-card"><span className="spinner" />Loading live data…</div> }
 function EmptyState({ message = 'No data matches these filters.' }: { message?: string }) { return <div className="state-card muted">{message}</div> }
 function formatNumber(value: number | null | undefined, digits = 1) { return value == null ? '—' : value.toLocaleString(undefined, { maximumFractionDigits: digits }) }
-function formatTimestamp(value: string) { return new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(new Date(value)) }
+function formatTimestamp(value: string) { return new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok', hourCycle: 'h23' }).format(new Date(value)) }
 
 function FilterBar({ value, onChange, includeLoad = true, children, className = '' }: { value: typeof INITIAL_FILTERS; onChange: (value: typeof INITIAL_FILTERS) => void; includeLoad?: boolean; children?: React.ReactNode; className?: string }) {
   const update = (key: keyof typeof INITIAL_FILTERS, next: string) => onChange({ ...value, [key]: next })
@@ -123,19 +135,30 @@ function AlertsPage() {
   const navigate = useNavigate()
   const [filters, setFilters] = useState({ ...INITIAL_FILTERS, severity: '', status: '', sort: 'event_time' })
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [state, setState] = useState<{ data: Alert[]; total: number; loading: boolean; error?: string }>({ data: [], total: 0, loading: true })
   useEffect(() => {
     let active = true
     const load = (initial = false) => {
       if (initial) setState(s => ({ ...s, loading: true }))
-      api.alerts(filters).then(result => { if (active) setState({ data: result.data, total: result.pagination.total, loading: false }) }).catch(error => { if (active) setState({ data: [], total: 0, loading: false, error: error.message }) })
+      api.alerts({ ...filters, page, page_size: ALERT_PAGE_SIZE }).then(result => { if (active) setState({ data: result.data, total: result.pagination.total, loading: false }) }).catch(error => { if (active) setState({ data: [], total: 0, loading: false, error: error.message }) })
     }
     load(true)
     const interval = window.setInterval(() => load(), 15000)
     return () => { active = false; window.clearInterval(interval) }
-  }, [filters])
+  }, [filters, page])
+  const totalPages = Math.max(1, Math.ceil(state.total / ALERT_PAGE_SIZE))
+  useEffect(() => {
+    if (!state.loading && page > totalPages) setPage(totalPages)
+  }, [page, state.loading, totalPages])
   const rows = state.data.filter(row => `${row.alert_id} ${row.floor} ${row.zone} ${row.load_type}`.toLowerCase().includes(search.toLowerCase()))
-  return <><PageHeading eyebrow="MONITORING" title="Potential Anomalies" subtitle="Review event-level statistical evidence and workflow status." /><FilterBar className="alerts-filter-bar" value={filters} onChange={value => setFilters({ ...filters, ...value })} includeLoad><div className="alert-secondary-filters"><SelectFilter label="Severity" value={filters.severity} options={['High', 'Medium', 'Low']} onChange={value => setFilters({ ...filters, severity: value })} /><SelectFilter label="Status" value={filters.status} options={['New', 'Acknowledged', 'Resolved']} onChange={value => setFilters({ ...filters, status: value })} /><label className="filter-select"><span>Sort</span><select value={filters.sort} onChange={event => setFilters({ ...filters, sort: event.target.value })}><option value="event_time">Event Time</option><option value="recently_added">Recently Added</option></select></label></div></FilterBar><section className="panel alerts-table-panel">{state.loading ? <LoadingState /> : state.error ? <ErrorState error={state.error} /> : <><div className="table-toolbar"><div><h2>Alert Events <span className="count-pill">{state.total.toLocaleString()}</span></h2><p>Grouped contiguous anomalies from the real processed dataset.</p></div><label className="search-box"><Search size={16} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search ID, floor, zone…" /></label></div><div className="table-scroll"><table><thead><tr><th>ALERT ID</th><th>SCOPE</th><th>START</th><th>DURATION</th><th>EXCESS</th><th>SEVERITY</th><th>STATUS</th></tr></thead><tbody>{rows.map(row => <tr key={row.alert_id} className="clickable-row" onClick={() => navigate(`/alerts/${row.alert_id}`)}><td className="id-cell">{row.alert_id}</td><td><strong>{row.floor} · {row.zone}</strong><small>{row.load_type}</small></td><td>{formatTimestamp(row.start_timestamp)}</td><td>{row.duration_minutes} min</td><td className="excess-cell">+{formatNumber(row.excess_energy_kwh, 2)} kWh</td><td><SeverityBadge severity={row.severity} /></td><td><StatusBadge status={row.status} /></td></tr>)}</tbody></table>{rows.length === 0 && <EmptyState />}</div></>}</section></>
+  const updateFilters = (value: Partial<typeof filters>) => {
+    setFilters(current => ({ ...current, ...value }))
+    setPage(1)
+  }
+  const firstItem = state.total === 0 ? 0 : (page - 1) * ALERT_PAGE_SIZE + 1
+  const lastItem = Math.min(page * ALERT_PAGE_SIZE, state.total)
+  return <><PageHeading eyebrow="MONITORING" title="Potential Anomalies" subtitle="Review event-level statistical evidence and workflow status." /><FilterBar className="alerts-filter-bar" value={filters} onChange={value => updateFilters(value)} includeLoad><div className="alert-secondary-filters"><SelectFilter label="Severity" value={filters.severity} options={['High', 'Medium', 'Low']} onChange={value => updateFilters({ severity: value })} /><SelectFilter label="Status" value={filters.status} options={['New', 'Acknowledged', 'Resolved']} onChange={value => updateFilters({ status: value })} /><label className="filter-select"><span>Sort</span><select value={filters.sort} onChange={event => updateFilters({ sort: event.target.value })}><option value="event_time">Event Time</option><option value="recently_added">Recently Added</option></select></label></div></FilterBar><section className="panel alerts-table-panel">{state.loading ? <LoadingState /> : state.error ? <ErrorState error={state.error} /> : <><div className="table-toolbar"><div><h2>Alert Events <span className="count-pill">{state.total.toLocaleString()}</span></h2><p>Grouped contiguous anomalies from the real processed dataset.</p></div><label className="search-box"><Search size={16} /><input value={search} onChange={event => { setSearch(event.target.value); setPage(1) }} placeholder="Search this page…" /></label></div><div className="table-scroll"><table><thead><tr><th>ALERT ID</th><th>SCOPE</th><th>START (BKK)</th><th>DURATION</th><th>EXCESS</th><th>SEVERITY</th><th>STATUS</th></tr></thead><tbody>{rows.map(row => <tr key={row.alert_id} className="clickable-row" onClick={() => navigate(`/alerts/${row.alert_id}`)}><td className="id-cell">{row.alert_id}</td><td><strong>{row.floor} · {row.zone}</strong><small>{row.load_type}</small></td><td>{formatTimestamp(row.start_timestamp)}</td><td>{row.duration_minutes} min</td><td className="excess-cell">+{formatNumber(row.excess_energy_kwh, 2)} kWh</td><td><SeverityBadge severity={row.severity} /></td><td><StatusBadge status={row.status} /></td></tr>)}</tbody></table>{rows.length === 0 && <EmptyState />}</div><div className="pagination-bar"><span>Showing {rows.length.toLocaleString()} matching · {firstItem.toLocaleString()}–{lastItem.toLocaleString()} of {state.total.toLocaleString()}</span><div className="pagination-controls"><button className="button button-secondary" disabled={page <= 1} onClick={() => setPage(current => current - 1)}>Previous</button><span>Page {page} of {totalPages}</span><button className="button button-secondary" disabled={page >= totalPages} onClick={() => setPage(current => current + 1)}>Next</button></div></div></>}</section></>
 }
 
 function AlertDetail() {
