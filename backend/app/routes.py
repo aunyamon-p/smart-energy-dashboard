@@ -167,7 +167,7 @@ def get_realtime_energy(
         "data": [
             {
                 "source_id": row.source_id,
-                "timestamp": row.timestamp.replace(tzinfo=UTC_PLUS_7),
+                "timestamp": normalize_timestamp(row.timestamp),
                 "floor": row.floor,
                 "zone": row.zone,
                 "load_type": row.load_type,
@@ -397,7 +397,7 @@ def weather_ac_analytics(
             {
                 "floor": row.floor,
                 "zone": row.zone,
-                "timestamp": row.timestamp.replace(tzinfo=UTC_PLUS_7),
+                "timestamp": normalize_timestamp(row.timestamp),
                 "ac_power_kw": row.ac_power_kw,
                 "valid_minute_count": row.valid_minute_count,
                 "expected_minute_count": row.expected_minute_count,

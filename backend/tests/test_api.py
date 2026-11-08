@@ -112,11 +112,12 @@ def test_ingest_normal_observation_creates_no_alert():
 
 def test_realtime_energy_includes_ingested_observation():
     source_id = "AUTOMATED-TEST-REALTIME-001"
+    timestamp = "2026-11-09T03:26:58.438131+07:00"
     response = client.post(
         "/api/ingest",
         json={
             "source_id": source_id,
-            "timestamp": "2026-11-07T22:07:00+07:00",
+            "timestamp": timestamp,
             "floor": "Floor1",
             "zone": "z2",
             "load_type": "AC",
@@ -125,6 +126,7 @@ def test_realtime_energy_includes_ingested_observation():
         },
     )
     assert response.status_code == 201
+    assert response.json()["timestamp"] == timestamp
     realtime = client.get(
         "/api/energy/realtime",
         params={"floor": "Floor1", "zone": "z2", "load_type": "AC"},
@@ -135,6 +137,21 @@ def test_realtime_energy_includes_ingested_observation():
     assert row["actual_kw"] == 90.0
     assert row["actual_kwh"] == 1.5
     assert row["anomaly_detected"] is True
+    returned_timestamp = datetime.fromisoformat(row["timestamp"])
+    expected_timestamp = datetime.fromisoformat(timestamp)
+    assert returned_timestamp == expected_timestamp
+    assert returned_timestamp.utcoffset() == expected_timestamp.utcoffset()
+
+
+def test_normalize_timestamp_preserves_aware_instants_and_legacy_local_values():
+    aware_utc = datetime.fromisoformat("2026-11-08T20:26:58.438131+00:00")
+    normalized_utc = ingestion.normalize_timestamp(aware_utc)
+    assert normalized_utc.isoformat() == "2026-11-09T03:26:58.438131+07:00"
+    assert normalized_utc.timestamp() == aware_utc.timestamp()
+
+    legacy_local = datetime(2026, 11, 9, 3, 26, 58, 438131)
+    normalized_local = ingestion.normalize_timestamp(legacy_local)
+    assert normalized_local.isoformat() == "2026-11-09T03:26:58.438131+07:00"
 
 
 def test_ingest_reuses_prepared_floor_baseline(monkeypatch):
