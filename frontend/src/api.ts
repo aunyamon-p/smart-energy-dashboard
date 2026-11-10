@@ -1,4 +1,16 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
+declare global {
+  interface Window {
+    APP_CONFIG?: {
+      API_BASE_URL?: string
+    }
+  }
+}
+
+const API_BASE_URL = (
+  window.APP_CONFIG?.API_BASE_URL?.trim()
+  || import.meta.env.VITE_API_BASE_URL?.trim()
+  || ''
+).replace(/\/+$/, '')
 
 export type AlertStatus = 'New' | 'Acknowledged' | 'Resolved'
 export type Severity = 'High' | 'Medium' | 'Low'

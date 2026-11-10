@@ -1,141 +1,156 @@
-# Smart Energy Intelligence System
+# 1. Smart Energy Intelligence System
 
-ระบบวิเคราะห์การใช้พลังงานจาก CU-BEMS Dataset ด้วย React + Vite + TypeScript และ FastAPI + SQLAlchemy + SQLite
+## 2. ภาพรวมโครงการ (Project Overview)
 
-## โครงสร้างโปรเจกต์
+เว็บแอปสำหรับติดตามและวิเคราะห์การใช้พลังงานจากข้อมูล CU-BEMS แสดงพลังงานจริงเทียบกับค่าคาดหมาย เหตุการณ์การใช้พลังงานผิดปกติ และข้อมูลสภาพอากาศที่เกี่ยวข้องกับการใช้เครื่องปรับอากาศ
+
+ระบบประกอบด้วย Frontend สำหรับแสดงผล, Backend API สำหรับอ่านและบันทึกข้อมูล และฐานข้อมูลสำหรับข้อมูลวิเคราะห์กับข้อมูล Realtime
+
+## 3. ประโยชน์ของแอปพลิเคชัน (Benefits of the Application)
+
+- เห็นภาพรวมการใช้พลังงานและแนวโน้มรายวัน เพื่อช่วยสังเกตช่วงที่ใช้พลังงานสูง
+- ค้นหาและติดตาม Alert ตามวัน อาคาร/ชั้น Zone ประเภทโหลด Severity และ Status ได้
+- เปิดดูรายละเอียด Alert พร้อมหลักฐานรายจุดและบริบทสภาพอากาศ เพื่อช่วยตรวจสอบเหตุการณ์
+- รับข้อมูลมิเตอร์ Realtime ผ่าน API และแสดงร่วมกับข้อมูล Historical
+- ตรวจสอบข้อมูลที่ขาดหายและข้อมูล AC ที่มีองค์ประกอบไม่ครบ โดยไม่แทนค่าข้อมูลที่ไม่มี
+
+ผลวิเคราะห์เป็นข้อมูลประกอบการติดตาม ไม่ใช่หลักฐานยืนยันสาเหตุของการใช้พลังงาน
+
+## 4. คุณสมบัติของระบบ (System Features)
+
+- **Energy Overview:** แสดง Actual Energy, Expected Energy, Potential Events และ Excess Energy พร้อมกราฟแนวโน้ม
+- **Historical และ Realtime:** แสดงยอด Historical รายวันและข้อมูลจากมิเตอร์ที่ส่งผ่าน `/api/ingest`
+- **Alert Monitoring:** กรอง Severity/Status/ช่วงวัน เรียงตามเวลาเหตุการณ์หรือเวลาที่เพิ่ม และแบ่งหน้า
+- **Alert Details:** แสดงช่วงเวลา ระยะเวลา Severity เหตุผล หลักฐานรายจุด และ Weather Context
+- **Weather & AC Analytics:** แสดงข้อมูลสภาพอากาศและการใช้ AC เพื่อประกอบการวิเคราะห์
+- **Data Quality:** แสดงจำนวนการสังเกตที่ขาดหายและข้อมูล AC ที่ไม่สมบูรณ์
+- **Additive Seed:** `backend/seed_database.py` นำเข้าข้อมูลที่ขาด ข้ามข้อมูลซ้ำที่ตรงกัน และยกเลิก Transaction เมื่อพบ Conflict
+- **Runtime API Configuration:** Frontend อ่าน Backend URL จาก `frontend/public/config.js` ก่อน แล้วจึงใช้ `VITE_API_BASE_URL` เป็น fallback
+
+## 5. เทคโนโลยีที่ใช้ (Tech Stack)
+
+- **Frontend:** React 18, TypeScript, Vite, React Router, Recharts และ Lucide
+- **Backend:** Python, FastAPI, Pydantic และ Uvicorn
+- **Data & Database:** Pandas, NumPy, SQLAlchemy และ Alembic; Local ใช้ SQLite และรองรับ PostgreSQL ผ่าน `DATABASE_URL`
+- **AWS integrations ที่มีโค้ดรองรับ:**
+  - **Amazon S3:** Backend อ่าน Raw CSV ผ่าน `HISTORICAL_DATASET_MODE=s3`, `HISTORICAL_DATASET_S3_BUCKET` และ `HISTORICAL_DATASET_S3_PREFIX`; Seed อ่าน Processed/Weather CSV เมื่อกำหนด `SEED_SOURCE=s3` และ `HISTORICAL_DATASET_S3_BUCKET`
+  - **Amazon EventBridge Scheduler → AWS Lambda → Backend API:** Scheduler เรียก Lambda ตามกำหนดเวลา, Lambda ส่ง JSON payload ต่อไปยัง `POST /api/ingest` โดยใช้ `INGEST_API_URL` และรองรับ `INGEST_API_TOKEN` กับ `INGEST_API_TIMEOUT`
+
+## 6. โครงสร้างโปรเจกต์ (Project Structure)
 
 ```text
 smart-energy-dashboard/
-├── frontend/   # React + Vite + TypeScript
-├── backend/    # FastAPI + SQLAlchemy + SQLite และ Dataset
-├── docs/       # รายงานและเอกสารการวิเคราะห์
-├── backend/.env.example
-├── .gitignore
+├── backend/
+│   ├── app/                 # FastAPI routes, models, schemas, database และ ingestion
+│   ├── alembic/             # Database migrations
+│   ├── .env.example         # ตัวอย่าง Backend configuration
+│   ├── data/
+│   │   ├── raw/             # CU-BEMS source CSV
+│   │   ├── processed/       # Daily energy, anomalies, alert events และ quality report
+│   │   ├── external/        # Weather และผลวิเคราะห์ที่เกี่ยวข้อง
+│   │   └── smart_energy.db  # Local SQLite database
+│   ├── lambda_adapter/      # Lambda handler ส่ง scheduled payload ไปยัง Backend API
+│   ├── tests/               # Backend API tests
+│   ├── seed_database.py     # นำเข้าข้อมูล Processed และ Weather
+│   └── requirements.txt
+├── frontend/
+│   ├── public/config.js     # Runtime Backend API URL
+│   ├── src/                 # React UI และ API client
+│   ├── .env.example         # Vite API URL fallback
+│   ├── index.html
+│   └── package.json
+├── docs/                    # เอกสารประกอบและรายงานวิเคราะห์
+├── Dockerfile
+├── alembic.ini
 └── README.md
 ```
 
-ข้อมูล Raw, Processed, Weather และ SQLite อยู่ภายใต้ `backend/data/` และไม่ถูกแก้ไขจากการแยกโครงสร้างนี้
+## 7. Dataset และแหล่งข้อมูล (Dataset & Data Sources)
 
-## ติดตั้ง
+- **CU-BEMS Raw:** `backend/data/raw/2018Floor1.csv` และ `2018Floor2.csv` เป็นข้อมูลต้นทางสำหรับสร้างผลวิเคราะห์
+- **Processed:** `backend/data/processed/` มี `processed_energy_daily.csv`, `anomalies.csv`, `alert_events.csv`, `data_quality_report.csv` และ `processing_summary.json`
+- **Weather:** `backend/data/external/` มีข้อมูลรายชั่วโมง `weather_hourly.csv` และข้อมูลจับคู่ Weather กับพลังงาน AC ใน `weather_energy_hourly.csv` รวมถึงไฟล์ผลวิเคราะห์
+- **Local Seed:** อ่าน Processed และ Weather CSV ข้างต้นจากเครื่อง แล้วเพิ่มข้อมูลลงตาราง `energy_daily`, `alert_events`, `anomaly_evidence`, `weather_hourly` และ `weather_ac_hourly`
+- **Realtime:** รับข้อมูลที่ `POST /api/ingest` และบันทึกลง `ingested_energy`; ตาราง Realtime ไม่ได้ถูกเติมจาก Historical Seed
 
-### Backend
+ข้อมูล CU-BEMS ครอบคลุม Floor1/Floor2, Zone ตามข้อมูลต้นทาง และโหลด AC, Light, Plug ค่าพลังงานรายวันและข้อมูล AC แสดงตามหน่วยที่ API ส่งกลับ
 
-ต้องใช้ Python 3.13 หรือ compatible version:
+## 8. ติดตั้งและเริ่มใช้งาน Local (Installation & Local Setup)
+
+คำสั่งต่อไปนี้ใช้ PowerShell จาก Project Root และต้องติดตั้ง Python กับ Node.js/npm ไว้แล้ว
+
+### ติดตั้ง Backend
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r backend\requirements.txt
+python -m pip install -r backend\requirements.txt
 Copy-Item backend\.env.example backend\.env
 ```
 
-### Frontend
+ค่าเริ่มต้นใน `backend/.env.example` ใช้ SQLite ที่ `backend/data/smart_energy.db` และอ่าน Historical Dataset จากไฟล์ Local
+
+### นำเข้าข้อมูลเริ่มต้น
 
 ```powershell
-cd frontend
-npm install
-Copy-Item .env.example .env
+python backend\seed_database.py
 ```
 
-แก้ `frontend\.env` เมื่อต้องการเปลี่ยน Backend URL:
+ตรวจผลโดยไม่บันทึกข้อมูล:
 
-```text
-VITE_API_BASE_URL=http://127.0.0.1:8000
+```powershell
+python backend\seed_database.py --dry-run
 ```
 
-กำหนด origin ที่อนุญาตให้เรียก Backend ผ่าน `backend\.env` หรือ environment
-variable ของ ECS ได้ โดยคั่นหลาย origin ด้วย comma:
-
-```text
-CORS_ORIGINS=http://localhost:5173
-```
-
-ค่าใน ECS จะ override ค่า default นี้โดยอัตโนมัติ จึงสามารถระบุ production
-frontend origin ใน ECS task definition ได้โดยไม่ต้องใส่ URL ดังกล่าวใน source code
-
-## วิธีรัน Local
-
-เปิด Terminal แยกกัน 2 หน้าต่างจาก Project Root
-
-Terminal 1 — Backend:
+### เริ่ม Backend
 
 ```powershell
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
-For App Runner, build from the repository root using the included
-`Dockerfile`. The container listens on port `8000` and binds to `0.0.0.0`.
+เอกสาร API อยู่ที่ `http://127.0.0.1:8000/docs` และ Health Check ที่ `http://127.0.0.1:8000/health`
 
-### PostgreSQL and migrations
+### เริ่ม Frontend
 
-Local development defaults to SQLite. For PostgreSQL, install the backend
-requirements and set a SQLAlchemy URL such as:
-
-```text
-DATABASE_URL=postgresql+psycopg://user:password@host:5432/database
-APP_ENV=production
-```
-
-Run migrations before starting a production container:
-
-```powershell
-alembic upgrade head
-```
-
-The application only calls `create_all()` automatically outside production.
-
-### Historical dataset storage
-
-Local development reads `backend\data\raw\2018Floor1.csv` and
-`2018Floor2.csv`. To read the same files from S3, set:
-
-```text
-HISTORICAL_DATASET_MODE=s3
-HISTORICAL_DATASET_S3_BUCKET=your-bucket
-HISTORICAL_DATASET_S3_PREFIX=historical/raw
-```
-
-The runtime uses the AWS SDK credential chain; no credentials are stored in
-the repository.
-
-### IoT Core and Lambda
-
-The Lambda entrypoint is `backend.lambda_adapter.handler.lambda_handler`.
-Configure `INGEST_API_URL` to the App Runner `/api/ingest` URL. An optional
-`INGEST_API_TOKEN` is forwarded as a Bearer token. The local simulator is
-`tools\mqtt_simulator.py`; install its separate dependency file before use.
-
-The MQTT message body must contain the same JSON fields accepted by
-`POST /api/ingest`: `source_id`, `timestamp`, `floor`, `zone`, `load_type`,
-`actual_kw`, and optionally `interval_minutes`.
-
-The Overview energy chart keeps using `/api/energy` for historical daily
-records and polls `/api/energy/realtime` every five seconds for observations
-stored by `/api/ingest`. The live observations are rendered alongside the
-historical trend without requiring a browser refresh.
-
-Terminal 2 — Frontend:
+เปิด Terminal อีกหน้าต่าง:
 
 ```powershell
 cd frontend
+npm install
 npm run dev
 ```
 
-เปิด URL ที่ Vite แสดง โดยปกติคือ `http://localhost:5173`
+Frontend ใช้ URL จาก `frontend/public/config.js` เป็นหลัก หากต้องการชี้ไป Backend Local ให้กำหนด `window.APP_CONFIG.API_BASE_URL` เป็น `http://127.0.0.1:8000` ในไฟล์นี้ หรือปล่อย URL ว่างเพื่อนำค่า `VITE_API_BASE_URL` มาใช้เป็น fallback จากนั้นเปิด URL ที่ Vite แสดง โดยปกติคือ `http://localhost:5173`
 
-## คำสั่งตรวจสอบ
-
-Frontend:
+### ตรวจสอบและทดสอบ
 
 ```powershell
-cd frontend
+# จาก Project Root
+python -m pytest backend\tests
+
+# จาก frontend
 npm run build
 ```
 
-Backend:
+### การตั้งค่าฐานข้อมูลและ Historical Dataset
 
-```powershell
-python -m pytest backend\tests
-```
+- กำหนด `DATABASE_URL` ใน `backend/.env` เมื่อต้องการใช้ฐานข้อมูลอื่น; ค่า Local เริ่มต้นเป็น SQLite
+- ใน Production ให้ตั้ง `APP_ENV=production` และใช้ `alembic upgrade head` จาก Project Root เพื่อจัดการ Schema ก่อนใช้งาน แอปจะไม่เรียก `create_all()` อัตโนมัติเมื่ออยู่ใน Production
 
-การเปลี่ยนโครงสร้างนี้ไม่เปลี่ยน API Endpoint, Schema, Anomaly Detection Logic หรือข้อมูล Dataset เดิม
+## 9. API Endpoints
+
+Base URL สำหรับ Local คือ `http://127.0.0.1:8000` ทุก Endpoint ของแอปอยู่ใต้ `/api` ยกเว้น Health Check
+
+| Method | Endpoint | รายละเอียด |
+|---|---|---|
+| `GET` | `/health` | ตรวจสถานะ Backend |
+| `GET` | `/api/dashboard/summary` | สรุปพลังงาน เหตุการณ์ และคุณภาพข้อมูลตามช่วงวันที่/มิติที่เลือก |
+| `GET` | `/api/energy` | ข้อมูลพลังงาน Historical รายวัน รองรับ `start_date`, `end_date`, `floor`, `zone`, `load_type`, `page`, `page_size` |
+| `GET` | `/api/energy/realtime` | ข้อมูลมิเตอร์ Realtime รองรับ `since`, `floor`, `zone`, `load_type`, `page`, `page_size` |
+| `GET` | `/api/alerts` | รายการ Alert รองรับช่วงวันที่ มิติ `severity`, `status`, `sort`, `page`, `page_size` |
+| `GET` | `/api/alerts/{alert_id}` | รายละเอียด Alert, หลักฐานรายจุด และ Weather Context |
+| `PATCH` | `/api/alerts/{alert_id}` | เปลี่ยน Status โดยส่ง JSON เช่น `{"status":"Acknowledged"}` |
+| `POST` | `/api/ingest` | รับข้อมูล Realtime โดยส่ง `source_id`, `timestamp`, `floor`, `zone`, `load_type`, `actual_kw` และ `interval_minutes` (ไม่บังคับ) |
+| `GET` | `/api/analytics/weather-ac` | ข้อมูล Weather และ AC ตามช่วงวันที่/มิติ รองรับ Pagination |
+
+Endpoint ที่แบ่งหน้ารายการส่ง `page` เริ่มที่ `1` และ `page_size` ได้สูงสุด `200` โดยค่าตอบกลับมี `pagination` ระบุ `page`, `page_size` และ `total` ค่า timestamp ของ Realtime ส่งเป็น ISO 8601 พร้อม offset เวลาไทย `+07:00`
