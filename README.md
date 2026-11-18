@@ -1,5 +1,7 @@
 # Smart Energy Intelligence System
 
+###Dataset .csv download link: https://drive.google.com/drive/folders/13OUQqaKye0wEpw8n6WIiQTdNBmB_6RUb?usp=sharing
+
 ## 1. ภาพรวมโครงการ (Project Overview)
 
 เว็บแอปสำหรับติดตามและวิเคราะห์การใช้พลังงานจากข้อมูล CU-BEMS แสดงพลังงานจริงเทียบกับค่าคาดหมาย เหตุการณ์การใช้พลังงานผิดปกติ และข้อมูลสภาพอากาศที่เกี่ยวข้องกับการใช้เครื่องปรับอากาศ
